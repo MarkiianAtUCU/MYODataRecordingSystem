@@ -1,0 +1,15 @@
+marker_settings:
+  color_threshold:
+    h:
+      low: 130
+      high: 158
+    s:
+      low: 79
+      high: 212
+    v:
+      low: 100
+      high: 110
+
+  area_threshold:
+    low: 100.0
+    high: 2000.0

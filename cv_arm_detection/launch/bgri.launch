@@ -1,0 +1,17 @@
+<launch>
+
+    <arg name="rgb_camera_info_topic" default="/camera/color/camera_info"/>
+    <arg name="depth_camera_info_topic" default="/camera/aligned_depth_to_color/camera_info"/>
+    <arg name="image_topic" default="/camera/color/image_raw"/>
+    <arg name="depth_topic" default="/camera/aligned_depth_to_color/image_raw"/>
+
+
+    <remap from="~rgb_camera_info" to="$(arg rgb_camera_info_topic)"/>
+    <remap from="~depth_camera_info" to="$(arg depth_camera_info_topic)"/>
+    <remap from="~image" to="$(arg image_topic)"/>
+    <remap from="~depth" to="$(arg depth_topic)"/>
+
+    <node name="arm_detection" pkg="cv_arm_detection" type="cv_arm_detection_node" output="screen" respawn="false">
+        <rosparam command="load" file="$(find cv_arm_detection)/config/pink.yaml"/>
+    </node>
+</launch>
