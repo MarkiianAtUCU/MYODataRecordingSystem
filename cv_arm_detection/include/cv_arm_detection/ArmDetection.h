@@ -24,6 +24,7 @@
 #include <cv_arm_detection/ArmDetectionConfig.h>
 #include <dynamic_reconfigure/server.h>
 #include <geometry_msgs/PoseArray.h>
+#include <sensor_msgs/JointState.h>
 
 class ArmDetection {
     typedef struct {
@@ -52,6 +53,7 @@ class ArmDetection {
     image_transport::Publisher pub_overlay_image_;
     image_transport::Publisher pub_thresholded_mask_;
     ros::Publisher pub_marker_poses_;
+    ros::Publisher pub_joint_state_;
 
     cv_bridge::CvImageConstPtr current_depth_frame_;
     std::mutex mtx_depth_image_;

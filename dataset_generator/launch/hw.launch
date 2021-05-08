@@ -1,0 +1,9 @@
+<launch>
+    <arg name="joint_state_data_topic" default="/arm_detection/ground_truth_joint_state"/>
+    <arg name="sensor_data_topic" default="/sensor_read/sensor_data_single"/>
+
+    <remap from="~joint_state_data" to="$(arg joint_state_data_topic)"/>
+    <remap from="~sensor_data" to="$(arg sensor_data_topic)"/>
+
+    <node name="dataset_generator" pkg="dataset_generator" type="dataset_generator_node" output="screen" respawn="false"/>
+</launch>

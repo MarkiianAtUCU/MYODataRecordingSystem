@@ -27,6 +27,7 @@ void ArmDetection::initializeCommunication() {
     pub_overlay_image_ = it_.advertise("debug/overlay", 1);
     pub_thresholded_mask_ = it_.advertise("debug/mask", 1);
     pub_marker_poses_ = nh_.advertise<geometry_msgs::PoseArray>("marker_poses", 1);
+    pub_joint_state_ = nh_.advertise<sensor_msgs::JointState>("ground_truth_joint_state", 1);
 
     srv_configure_ = nh_.advertiseService("configure", &ArmDetection::configureCallback, this);
 
@@ -187,35 +188,6 @@ void ArmDetection::rgbImageCallback(const sensor_msgs::ImageConstPtr &msg) {
         detected_markers.emplace_back(posX, posY);
     }
 
-    {
-        std::scoped_lock<std::mutex> lk(mtx_depth_image_);
-        if (abs((current_rgb_frame_->header.stamp - current_depth_frame_->header.stamp).toSec()) > 0.05) {
-            ROS_WARN_THROTTLE(1, "Depth and RGB image not in sync");
-        }
-
-
-        geometry_msgs::PoseArray msg_marker_poses;
-        msg_marker_poses.header = msg->header;
-        for (auto &marker: detected_markers) {
-            auto z = depthInNeighborhood(current_depth_frame_->image, marker.x, marker.y, 5, 100);
-            const cv::Point2d p(marker.x, marker.y);
-            auto object_ray = rgb_camera_model_.projectPixelTo3dRay(rgb_camera_model_.rectifyPoint(p));
-
-            auto object_ray_mag = sqrt(
-                    object_ray.x * object_ray.x + object_ray.y * object_ray.y + object_ray.z * object_ray.z);
-
-            auto object_coordinates = (object_ray / object_ray_mag) * z;
-
-            msg_marker_poses.poses.emplace_back();
-            msg_marker_poses.poses.back().position.x = object_coordinates.x;
-            msg_marker_poses.poses.back().position.y = object_coordinates.y;
-            msg_marker_poses.poses.back().position.z = object_coordinates.z;
-        }
-        if (!msg_marker_poses.poses.empty())
-            pub_marker_poses_.publish(msg_marker_poses);
-//        cv::imshow("depth", current_depth_frame_->image);
-    }
-
 
     std::vector<std::vector<int>> permutations = {
             {0, 1, 2},
@@ -238,7 +210,9 @@ void ArmDetection::rgbImageCallback(const sensor_msgs::ImageConstPtr &msg) {
 
         std::sort(fitted_lines.begin(), fitted_lines.end(), LineFitResCompare());
 
+
         for (int i = 0; i < 2; ++i) {
+
             cv::line(current_rgb_frame_->image,
                      cv::Point(fitted_lines[i].a.x,
                                fitted_lines[i].coord.x + fitted_lines[i].coord.y * fitted_lines[i].a.x),
@@ -258,6 +232,96 @@ void ArmDetection::rgbImageCallback(const sensor_msgs::ImageConstPtr &msg) {
                      {0, 0, 255},
                      3
             );
+        }
+
+
+        sensor_msgs::JointState js_msg;
+        js_msg.header = msg->header;
+        js_msg.name.push_back("elbow_x");
+
+        {
+            std::scoped_lock<std::mutex> lk(mtx_depth_image_);
+            if (abs((current_rgb_frame_->header.stamp - current_depth_frame_->header.stamp).toSec()) > 0.05) {
+                ROS_WARN_THROTTLE(1, "Depth and RGB image not in sync");
+            }
+
+            std::vector<cv::Point> line_1 = {fitted_lines[0].a, fitted_lines[0].b, fitted_lines[0].c};
+            std::vector<cv::Point> line_2 = {fitted_lines[1].a, fitted_lines[1].b, fitted_lines[1].c};
+
+            std::vector<cv::Point> matched_points;
+            for (const auto &e_1: line_1) {
+                for (const auto &e_2: line_2) {
+                    if (e_1 == e_2) {
+                        matched_points.emplace_back(e_1);
+                        break;
+                    }
+                }
+            }
+
+            cv::Point max_point;
+            float max_dist = -1;
+            for (const auto &e_1: line_1) {
+                auto current_dist = (matched_points[0] - e_1).dot(matched_points[0] - e_1);
+                if (current_dist > max_dist) {
+                    max_dist = current_dist;
+                    max_point = e_1;
+                }
+            }
+
+            matched_points.emplace_back(max_point);
+
+
+            max_dist = -1;
+            for (const auto &e_1: line_2) {
+                auto current_dist = (matched_points[0] - e_1).dot(matched_points[0] - e_1);
+                if (current_dist > max_dist) {
+                    max_dist = current_dist;
+                    max_point = e_1;
+                }
+            }
+
+            matched_points.emplace_back(max_point);
+
+            cv::circle(current_rgb_frame_->image, matched_points[0], 5, {255, 255, 255}, 3);
+            cv::circle(current_rgb_frame_->image, matched_points[1], 5, {255, 0, 255}, 3);
+            cv::circle(current_rgb_frame_->image, matched_points[2], 5, {255, 0, 255}, 3);
+
+
+            std::vector<cv::Point3d> markers_in_3d;
+            geometry_msgs::PoseArray msg_marker_poses;
+            msg_marker_poses.header = msg->header;
+            for (auto &marker: matched_points) {
+                auto z = depthInNeighborhood(current_depth_frame_->image, marker.x, marker.y, 5, 100);
+
+                auto object_ray = rgb_camera_model_.projectPixelTo3dRay(rgb_camera_model_.rectifyPoint(marker));
+
+                auto object_ray_mag = sqrt(
+                        object_ray.x * object_ray.x + object_ray.y * object_ray.y + object_ray.z * object_ray.z);
+
+                auto object_coordinates = (object_ray / object_ray_mag) * z;
+                markers_in_3d.emplace_back(object_coordinates);
+                msg_marker_poses.poses.emplace_back();
+                msg_marker_poses.poses.back().position.x = object_coordinates.x;
+                msg_marker_poses.poses.back().position.y = object_coordinates.y;
+                msg_marker_poses.poses.back().position.z = object_coordinates.z;
+            }
+
+            auto AB = markers_in_3d[1] - markers_in_3d[0];
+            auto BC = markers_in_3d[2] - markers_in_3d[0];
+
+            js_msg.position.emplace_back(abs(
+                    acos(
+                            AB.dot(BC) / (
+                                    cv::sqrt(AB.x * AB.x + AB.y * AB.y) *
+                                    cv::sqrt(BC.x * BC.x + BC.y * BC.y)
+                            )
+                    ) * 180.0 / M_PI
+                                         )
+            );
+
+            pub_marker_poses_.publish(msg_marker_poses);
+            pub_joint_state_.publish(js_msg);
+//        cv::imshow("depth", current_depth_frame_->image);
         }
 
 
